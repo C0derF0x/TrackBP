@@ -5,6 +5,7 @@ enum AnalyticsPeriod {
   last7Days,
   last30Days,
   last12Months,
+  customDay,
 }
 
 extension AnalyticsPeriodDetails on AnalyticsPeriod {
@@ -16,6 +17,8 @@ extension AnalyticsPeriodDetails on AnalyticsPeriod {
         return '30 Days';
       case AnalyticsPeriod.last12Months:
         return '12 Months';
+      case AnalyticsPeriod.customDay:
+        return 'Custom Day';
     }
   }
 
@@ -31,6 +34,9 @@ extension AnalyticsPeriodDetails on AnalyticsPeriod {
 
       case AnalyticsPeriod.last12Months:
         return DateTime(now.year, now.month - 11, 1);
+
+      case AnalyticsPeriod.customDay:
+        return DateTime(now.year, now.month, now.day);
     }
   }
 
@@ -38,6 +44,7 @@ extension AnalyticsPeriodDetails on AnalyticsPeriod {
     switch (this) {
       case AnalyticsPeriod.last7Days:
       case AnalyticsPeriod.last30Days:
+      case AnalyticsPeriod.customDay:
         return DateTime(now.year, now.month, now.day + 1);
 
       case AnalyticsPeriod.last12Months:
@@ -117,6 +124,32 @@ class AnalyticsData {
         ? null
         : pulseTotal / pulseReadings.length;
 
+    // Custom Day: preserve every individual reading and its exact time.
+    if (period == AnalyticsPeriod.customDay) {
+      final sortedMeasurements = [...measurements]
+        ..sort(
+          (a, b) => a.measuredAt.compareTo(b.measuredAt),
+        );
+
+      final trendPoints = sortedMeasurements.map((reading) {
+        return TrendPoint(
+          date: reading.measuredAt,
+          systolic: reading.systolic.toDouble(),
+          diastolic: reading.diastolic.toDouble(),
+          pulse: reading.pulse?.toDouble(),
+        );
+      }).toList();
+
+      return AnalyticsData(
+        readingCount: measurements.length,
+        averageSystolic: averageSystolic,
+        averageDiastolic: averageDiastolic,
+        averagePulse: averagePulse,
+        trendPoints: trendPoints,
+      );
+    }
+
+    // Existing behaviour: group readings by day or month.
     final Map<DateTime, List<Measurement>> groupedReadings = {};
 
     for (final reading in measurements) {

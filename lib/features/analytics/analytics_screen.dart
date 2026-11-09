@@ -21,6 +21,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   AnalyticsPeriod _selectedPeriod = AnalyticsPeriod.last7Days;
 
+  DateTime _selectedDate = DateTime.now();
+
   AnalyticsData _analyticsData = const AnalyticsData(
     readingCount: 0,
     averageSystolic: null,
@@ -45,10 +47,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     try {
       final now = DateTime.now();
 
+      final DateTime start;
+      final DateTime end;
+
+      if (_selectedPeriod == AnalyticsPeriod.customDay) {
+        start = DateTime(
+          _selectedDate.year,
+          _selectedDate.month,
+          _selectedDate.day,
+        );
+
+        end = start.add(const Duration(days: 1));
+      } else {
+        start = _selectedPeriod.getStartDate(now);
+        end = _selectedPeriod.getEndDate(now);
+      }
+
       final measurements = await _repository.getMeasurementsInRange(
         userId: _userId,
-        start: _selectedPeriod.getStartDate(now),
-        end: _selectedPeriod.getEndDate(now),
+        start: start,
+        end: end,
       );
 
       final data = AnalyticsData.fromMeasurements(
@@ -77,6 +95,26 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     }
   }
 
+  Future<void> _selectCustomDate() async {
+    final today = DateTime.now();
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(today.year, today.month, today.day),
+      helpText: 'Select a day to analyse',
+    );
+
+    if (selectedDate == null || !mounted) return;
+
+    setState(() {
+      _selectedDate = selectedDate;
+    });
+
+    await _loadAnalytics();
+  }
+
   String _formatAverage(double? value) {
     if (value == null) return '--';
     return value.toStringAsFixed(1);
@@ -90,6 +128,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     ];
 
     return '${date.day} ${months[date.month - 1]}';
+  }
+
+  String _formatFullDate(DateTime date) {
+    const months = [
+      'January', 'February', 'March', 'April',
+      'May', 'June', 'July', 'August',
+      'September', 'October', 'November', 'December',
+    ];
+
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
   }
 
   String _formatMonthYear(DateTime date) {
@@ -110,6 +158,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     ];
 
     return "${months[date.month - 1]} '${date.year % 100}";
+  }
+
+  String _formatTimeAxisLabel(DateTime date) {
+    return TimeOfDay.fromDateTime(date).format(context);
   }
 
   Widget _buildPeriodSelector() {
@@ -156,13 +208,48 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         ? colors.onPrimary
                         : colors.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
-                    fontSize: 12,
+                    fontSize: 11,
                   ),
                 ),
               ),
             ),
           );
         }).toList(),
+      ),
+    );
+  }
+
+  Widget _buildCustomDateSelector() {
+    final colors = Theme.of(context).colorScheme;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        children: [
+          Icon(
+            Icons.calendar_today_outlined,
+            size: 19,
+            color: colors.primary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Selected day',
+              style: TextStyle(
+                color: colors.onSurfaceVariant,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: _selectCustomDate,
+            icon: const Icon(
+              Icons.edit_calendar_outlined,
+              size: 17,
+            ),
+            label: Text(_formatFullDate(_selectedDate)),
+          ),
+        ],
       ),
     );
   }
@@ -391,6 +478,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       AnalyticsPeriod.last7Days => 1,
       AnalyticsPeriod.last30Days => 5,
       AnalyticsPeriod.last12Months => 2,
+      AnalyticsPeriod.customDay => bucketCount > 6 ? 2 : 1,
     };
 
     final seriesColors = [
@@ -509,10 +597,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
                         final date = bucketDates[index];
 
-                        final label =
-                            _selectedPeriod == AnalyticsPeriod.last12Months
-                                ? _formatMonthAxisLabel(date)
-                                : '${date.day}/${date.month}';
+                        final String label;
+
+                        if (_selectedPeriod == AnalyticsPeriod.customDay) {
+                          label = _formatTimeAxisLabel(date);
+                        } else if (_selectedPeriod ==
+                            AnalyticsPeriod.last12Months) {
+                          label = _formatMonthAxisLabel(date);
+                        } else {
+                          label = '${date.day}/${date.month}';
+                        }
 
                         return SideTitleWidget(
                           meta: meta,
@@ -546,10 +640,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
                       final date = bucketDates[index];
 
-                      final dateLabel =
-                          _selectedPeriod == AnalyticsPeriod.last12Months
-                              ? _formatMonthYear(date)
-                              : _formatDate(date);
+                      final String dateLabel;
+
+                      if (_selectedPeriod == AnalyticsPeriod.customDay) {
+                        dateLabel =
+                            '${_formatFullDate(date)} '
+                            '${_formatTimeAxisLabel(date)}';
+                      } else if (_selectedPeriod ==
+                          AnalyticsPeriod.last12Months) {
+                        dateLabel = _formatMonthYear(date);
+                      } else {
+                        dateLabel = _formatDate(date);
+                      }
 
                       final seriesLabel = seriesLabels[rodIndex];
 
@@ -578,6 +680,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Widget _buildBloodPressureChart() {
     final colors = Theme.of(context).colorScheme;
     final points = _analyticsData.trendPoints;
+
+    final isCustomDay = _selectedPeriod == AnalyticsPeriod.customDay;
 
     final systolicValues = points
         .map((point) => point.systolic)
@@ -627,7 +731,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       children: [
         _buildChartCard(
           title: 'Systolic trend',
-          subtitle: 'Average systolic pressure over time',
+          subtitle: isCustomDay
+              ? 'Individual systolic readings throughout the day'
+              : 'Average systolic pressure over time',
           barGroups: systolicGroups,
           bucketDates: dates,
           values: systolicValues,
@@ -638,7 +744,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         const SizedBox(height: 16),
         _buildChartCard(
           title: 'Diastolic trend',
-          subtitle: 'Average diastolic pressure over time',
+          subtitle: isCustomDay
+              ? 'Individual diastolic readings throughout the day'
+              : 'Average diastolic pressure over time',
           barGroups: diastolicGroups,
           bucketDates: dates,
           values: diastolicValues,
@@ -651,6 +759,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildPulseChart() {
+    final isCustomDay = _selectedPeriod == AnalyticsPeriod.customDay;
+
     final points = _analyticsData.trendPoints
         .where((point) => point.pulse != null)
         .toList();
@@ -677,7 +787,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     return _buildChartCard(
       title: 'Pulse trend',
-      subtitle: 'Average recorded pulse for each day or month',
+      subtitle: isCustomDay
+          ? 'Individual pulse readings throughout the day'
+          : 'Average recorded pulse for each day or month',
       barGroups: barGroups,
       bucketDates: points.map((point) => point.date).toList(),
       values: values,
@@ -689,6 +801,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
   Widget _buildEmptyPeriodMessage() {
     final colors = Theme.of(context).colorScheme;
+
+    final isCustomDay = _selectedPeriod == AnalyticsPeriod.customDay;
 
     return Container(
       width: double.infinity,
@@ -709,7 +823,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            'No readings in this period',
+            isCustomDay
+                ? 'No readings on this day'
+                : 'No readings in this period',
             style: TextStyle(
               fontWeight: FontWeight.w600,
               color: colors.onSurface,
@@ -717,7 +833,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            'Add some readings to start seeing your trends and averages.',
+            isCustomDay
+                ? 'Choose another date or add a reading to see your daily trends.'
+                : 'Add some readings to start seeing your trends and averages.',
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 13,
@@ -770,7 +888,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ),
                 const SizedBox(height: 24),
                 _buildPeriodSelector(),
+
+                if (_selectedPeriod == AnalyticsPeriod.customDay)
+                  _buildCustomDateSelector(),
+
                 const SizedBox(height: 25),
+
                 if (_isLoading)
                   Center(
                     child: Padding(
